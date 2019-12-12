@@ -1,11 +1,14 @@
-from sympy import Integer,Symbol,symbols,simplify,Rational,Function,srepr,sin,cos,exp,Add,Mul,Pow,preorder_traversal,N,Float,S,var,sympify
-import NRPy_param_funcs as par
-import re
+from sympy import Integer,Symbol,symbols,simplify,Rational,sign,Function,srepr,sin,cos,exp,log,Abs,Add,Mul,Pow,preorder_traversal,N,Float,S,var,sympify
+import re, sys
 
 # For debugging purposes, Part 1:
 # Basic arithmetic operations
 def ConstSIMD_check(a):
     return Float(a,34)
+def AbsSIMD_check(a):
+    return Abs(a)
+def nrpyAbsSIMD_check(a):
+    return Abs(a)
 def AddSIMD_check(a,b):
     return a+b
 def SubSIMD_check(a,b):
@@ -18,6 +21,8 @@ def FusedMulSubSIMD_check(a,b,c):
     return a*b - c
 def DivSIMD_check(a,b):
     return a/b
+def signSIMD_check(a):
+    return sign(a)
 
 # For debugging purposes, Part 2:
 # Transcendental operations
@@ -29,6 +34,8 @@ def CbrtSIMD_check(a):
     return a**(Rational(1,3))
 def ExpSIMD_check(a):
     return exp(a)
+def LogSIMD_check(a):
+    return log(a)
 def SinSIMD_check(a):
     return sin(a)
 def CosSIMD_check(a):
@@ -40,7 +47,7 @@ def CosSIMD_check(a):
 # Resolution: This function extends lists "SIMD_const_varnms" and "SIMD_const_values",
 #             which store the name of each constant SIMD array (e.g., _Integer_1) and
 #             the value of each variable (e.g., 1.0).
-def expr_convert_to_SIMD_intrins(expr,  SIMD_const_varnms,SIMD_const_values,debug="False"):
+def expr_convert_to_SIMD_intrins(expr,  SIMD_const_varnms,SIMD_const_values,SIMD_const_suffix="",debug="False"):
 
     # Declare all variables, so we can eval them in the next (AddSIMD & MulSIMD) step
     for item in preorder_traversal(expr):
@@ -50,17 +57,20 @@ def expr_convert_to_SIMD_intrins(expr,  SIMD_const_varnms,SIMD_const_values,debu
 
     expr_orig = expr
 
+    AbsSIMD = Function("AbsSIMD")
     AddSIMD = Function("AddSIMD")
     SubSIMD = Function("SubSIMD")
     MulSIMD = Function("MulSIMD")
     FusedMulAddSIMD = Function("FusedMulAddSIMD")
     FusedMulSubSIMD = Function("FusedMulSubSIMD")
     DivSIMD = Function("DivSIMD")
+    SignSIMD = Function("SignSIMD")
 
     PowSIMD = Function("PowSIMD")
     SqrtSIMD = Function("SqrtSIMD")
     CbrtSIMD = Function("CbrtSIMD")
     ExpSIMD = Function("ExpSIMD")
+    LogSIMD = Function("LogSIMD")
     SinSIMD = Function("SinSIMD")
     CosSIMD = Function("CosSIMD")
 
@@ -68,47 +78,42 @@ def expr_convert_to_SIMD_intrins(expr,  SIMD_const_varnms,SIMD_const_values,debu
     #         Note that due to how SymPy expresses rational numbers, the following does not
     #         affect fractional expressions of integers
     for item in preorder_traversal(expr):
-        if item.func == exp:
+        if item.func == Abs:
+            expr = expr.xreplace({item: AbsSIMD(item.args[0])})
+        elif item.func == exp:
             expr = expr.xreplace({item: ExpSIMD(item.args[0])})
-        if item.func == sin:
+        elif item.func == log:
+            expr = expr.xreplace({item: LogSIMD(item.args[0])})
+        elif item.func == sin:
             expr = expr.xreplace({item: SinSIMD(item.args[0])})
-        if item.func == cos:
+        elif item.func == cos:
             expr = expr.xreplace({item: CosSIMD(item.args[0])})
+        elif item.func == sign:
+            expr = expr.xreplace({item: SignSIMD(item.args[0])})
+
+    # Fun little recursive function for constructing integer powers:
+    def IntegerPowSIMD(a, n):
+        if n == 2:
+            return MulSIMD(a, a)
+        elif n > 2:
+            return MulSIMD(IntegerPowSIMD(a, n - 1), a)
+        elif n <= -2:
+            return DivSIMD(1, IntegerPowSIMD(a, -n))
+        elif n == -1:
+            return DivSIMD(1, a)
 
     for item in preorder_traversal(expr):
         if item.func == Pow:
             if item.args[1] == 0.5:
                 expr = expr.xreplace({item: SqrtSIMD(item.args[0])})
+            elif item.args[1] == -0.5:
+                expr = expr.xreplace({item: DivSIMD(1,SqrtSIMD(item.args[0]))})
             elif item.args[1] == Rational(1,3):
                 expr = expr.xreplace({item: CbrtSIMD(item.args[0])})
-            elif item.args[1] == 2:
-                expr = expr.xreplace({item: MulSIMD(item.args[0],item.args[0])})
-            elif item.args[1] == -2:
-                expr = expr.xreplace({item: DivSIMD(1,MulSIMD(item.args[0],item.args[0]))})
-            elif item.args[1] == 3: #and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: MulSIMD(item.args[0],MulSIMD(item.args[0],item.args[0]))})
-            elif item.args[1] == -3: # and len(item.args)==1 and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: DivSIMD(1,MulSIMD(item.args[0], MulSIMD(item.args[0], item.args[0])))})
-            elif item.args[1] == 4 and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],item.args[0])))})
-            elif item.args[1] == -4 and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: DivSIMD(1,MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], item.args[0]))))})
-            elif item.args[1] == 5 and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],item.args[0]))))})
-            elif item.args[1] == -5 and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: DivSIMD(1,MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], item.args[0])))))})
-            elif item.args[1] == 6 and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],item.args[0])))))})
-            elif item.args[1] == -6 and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: DivSIMD(1,MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], item.args[0]))))))})
-            elif item.args[1] == 7 and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],MulSIMD(item.args[0],item.args[0]))))))})
-            elif item.args[1] == -7 and item.args[0].is_Symbol:
-                expr = expr.xreplace({item: DivSIMD(1,MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], MulSIMD(item.args[0], item.args[0])))))))})
-            elif item.args[1] == -1:
-                expr = expr.xreplace({item: DivSIMD(1, item.args[0])})
+            elif item.args[1] == int(item.args[1]):
+                expr = expr.xreplace({item: IntegerPowSIMD(item.args[0], item.args[1])})
             else:
-                expr = expr.xreplace({item: PowSIMD(item.args[0],item.args[1])})
+                expr = expr.xreplace({item:        PowSIMD(item.args[0], item.args[1])})
 
     # Step 2: Replace all rational numbers (expressed as Rational(a,b))
     #         and integers with the new functions RationalTMP and
@@ -118,12 +123,12 @@ def expr_convert_to_SIMD_intrins(expr,  SIMD_const_varnms,SIMD_const_values,debu
     IntegerTMP = Function("IntegerTMP")
 
     string = str(srepr(expr))
-    string2 = re.sub('Integer\(([+\-0-9]+)\)',
+    string2 = re.sub(r'Integer\(([+\-0-9]+)\)',
                      "(Function('IntegerTMP')('\\1'))", string)
     expr = eval(string2)
 
     string = str(srepr(expr))
-    string2 = re.sub('Rational\(([0-9]+), ([0-9]+)\)',
+    string2 = re.sub(r'Rational\(([-0-9]+), ([0-9]+)\)',
                      "(Function('RationalTMP')(('\\1'),('\\2')))", string)
     expr = eval(string2)
 
@@ -245,22 +250,22 @@ def expr_convert_to_SIMD_intrins(expr,  SIMD_const_varnms,SIMD_const_values,debu
         if item.func == RationalTMP:
             # Set variable name
             if item.args[0]*item.args[1] < 0:
-                SIMD_const_varnms.extend(["_Rational_m"+str(abs(item.args[0]))+"_"+str(abs(item.args[1]))])
+                SIMD_const_varnms.extend(["_Rational_m"+str(abs(item.args[0]))+"_"+str(abs(item.args[1]))+SIMD_const_suffix])
             elif item.args[0] > 0 and item.args[1] > 0:
-                SIMD_const_varnms.extend(["_Rational_"+str(item.args[0])+"_"+str(item.args[1])])
+                SIMD_const_varnms.extend(["_Rational_"+str(item.args[0])+"_"+str(item.args[1])+SIMD_const_suffix])
             else:
                 # E.g., doesn't make sense to have -1/-3. SymPy should have simplified this.
                 print("Found a weird Rational(a,b) expression, where a<0 and b<0. Report to SymPy devels")
                 print("Specifically, found that a="+str(item.args[0])+" and b="+str(item.args[1]))
-                exit(1)
+                sys.exit(1)
             # Set variable value, to 34 digits of precision
             SIMD_const_values.extend([str(N(Float(item.args[0],34)/Float(item.args[1],34),34))])
         elif item.func == IntegerTMP:
             # Set variable name
             if item.args[0] < 0:
-                SIMD_const_varnms.extend(["_Integer_m"+str(-item.args[0])])
+                SIMD_const_varnms.extend(["_Integer_m"+str(-item.args[0])+SIMD_const_suffix])
             else:
-                SIMD_const_varnms.extend(["_Integer_" + str(item.args[0])])
+                SIMD_const_varnms.extend(["_Integer_" + str(item.args[0])+SIMD_const_suffix])
             # Set variable value, to 34 digits of precision
             SIMD_const_values.extend([str((Float(item.args[0],34)))])
 
@@ -269,19 +274,19 @@ def expr_convert_to_SIMD_intrins(expr,  SIMD_const_varnms,SIMD_const_values,debu
         tempitem = item
         if item.func == RationalTMP:
             if item.args[0]*item.args[1] < 0:
-                tempitem = var("_Rational_m" + str(abs(item.args[0])) + "_" + str(abs(item.args[1])))
+                tempitem = var("_Rational_m" + str(abs(item.args[0])) + "_" + str(abs(item.args[1]))+SIMD_const_suffix)
             elif item.args[0] > 0 and item.args[1] > 0:
-                tempitem = var("_Rational_" + str(item.args[0]) + "_" + str(item.args[1]))
+                tempitem = var("_Rational_" + str(item.args[0]) + "_" + str(item.args[1])+SIMD_const_suffix)
             else:
                 # E.g., doesn't make sense to have -1/-3. SymPy should have simplified this.
                 print("Found a weird Rational(a,b) expression, where a<0 and b<0. Report to SymPy devels")
                 print("Specifically, found that a=" + str(item.args[0]) + " and b=" + str(item.args[1]))
-                exit(1)
+                sys.exit(1)
         elif item.func == IntegerTMP:
             if item.args[0] < 0:
-                tempitem = var("_Integer_m" + str(-item.args[0]))
+                tempitem = var("_Integer_m" + str(-item.args[0])+SIMD_const_suffix)
             else:
-                tempitem = var("_Integer_" + str(item.args[0]))
+                tempitem = var("_Integer_" + str(item.args[0])+SIMD_const_suffix)
         if item != tempitem: expr = expr.subs(item, tempitem)
 
     def lookup_name_output_idx(name, list_of_names):
@@ -289,7 +294,7 @@ def expr_convert_to_SIMD_intrins(expr,  SIMD_const_varnms,SIMD_const_values,debu
             if list_of_names[i] == name:
                 return i
         print("I SHOULDN'T BE HERE!",name,list_of_names)
-        exit(1)
+        sys.exit(1)
 
     if debug=="True":
         expr_check = expr

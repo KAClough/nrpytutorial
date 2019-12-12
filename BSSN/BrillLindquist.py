@@ -25,34 +25,44 @@
 # **Transformation to curvilinear coordinates**:
 # * Once the above variables have been set in Cartesian coordinates, we will apply the appropriate coordinate transformations and tensor rescalings ([described in the BSSN NRPy+ tutorial module](Tutorial-BSSNCurvilinear.ipynb))
 
-# Step P0: Load needed modules
-import sympy as sp
-import NRPy_param_funcs as par
-from outputC import *
-import indexedexp as ixp
-import BSSN.CartesianADMID_to_BSSNCurvilinearID as ctob
-import BSSN.BSSN_ID_function_string as bIDf
+# Step 1: Initialize core Python/NRPy+ modules
+import sympy as sp             # SymPy: The Python computer algebra package upon which NRPy+ depends
+import NRPy_param_funcs as par # NRPy+: Parameter interface
+import indexedexp as ixp       # NRPy+: Symbolic indexed expression (e.g., tensors, vectors, etc.) support
+import BSSN.ADM_Exact_Spherical_or_Cartesian_to_BSSNCurvilinear as AtoB
 
-def BrillLindquist():
-    thismodule = "Brill-Lindquist"
-    BH1_posn_x,BH1_posn_y,BH1_posn_z = par.Cparameters("REAL", thismodule, ["BH1_posn_x","BH1_posn_y","BH1_posn_z"])
-    BH1_mass = par.Cparameters("REAL", thismodule, ["BH1_mass"])
-    BH2_posn_x,BH2_posn_y,BH2_posn_z = par.Cparameters("REAL", thismodule, ["BH2_posn_x","BH2_posn_y","BH2_posn_z"])
-    BH2_mass = par.Cparameters("REAL", thismodule, ["BH2_mass"])
+thismodule = __name__
 
-    # Step 0: Set spatial dimension (must be 3 for BSSN)
+BH1_posn_x, BH1_posn_y, BH1_posn_z = par.Cparameters("REAL", thismodule,
+                                                     ["BH1_posn_x", "BH1_posn_y", "BH1_posn_z"],
+                                                     [0.0, 0.0, +0.5])
+BH1_mass = par.Cparameters("REAL", thismodule, ["BH1_mass"], 1.0)
+BH2_posn_x, BH2_posn_y, BH2_posn_z = par.Cparameters("REAL", thismodule,
+                                                     ["BH2_posn_x", "BH2_posn_y", "BH2_posn_z"],
+                                                     [0.0, 0.0, -0.5])
+BH2_mass = par.Cparameters("REAL", thismodule, ["BH2_mass"], 1.0)
+
+
+# ComputeADMGlobalsOnly == True will only set up the ADM global quantities.
+#                       == False will perform the full ADM SphorCart->BSSN Curvi conversion
+def BrillLindquist(ComputeADMGlobalsOnly = False):
+    global Cartxyz,gammaCartDD, KCartDD, alphaCart, betaCartU, BCartU
+    
+    # Step 2: Setting up Brill-Lindquist initial data
+
+    # Step 2.a: Set spatial dimension (must be 3 for BSSN)
     DIM = 3
     par.set_parval_from_str("grid::DIM",DIM)
 
     global Cartxyz, gammaCartDD, KCartDD, alphaCart, betaCartU, BCartU
     Cartxyz = ixp.declarerank1("Cartxyz")
 
-    # Step 1: Set psi, the conformal factor:
+    # Step 2.b: Set psi, the conformal factor:
     psi = sp.sympify(1)
     psi += BH1_mass / ( 2 * sp.sqrt((Cartxyz[0]-BH1_posn_x)**2 + (Cartxyz[1]-BH1_posn_y)**2 + (Cartxyz[2]-BH1_posn_z)**2) )
     psi += BH2_mass / ( 2 * sp.sqrt((Cartxyz[0]-BH2_posn_x)**2 + (Cartxyz[1]-BH2_posn_y)**2 + (Cartxyz[2]-BH2_posn_z)**2) )
 
-    # Step 2: Set all needed ADM variables in Cartesian coordinates
+    # Step 2.c: Set all needed ADM variables in Cartesian coordinates
     gammaCartDD = ixp.zerorank2()
     KCartDD     = ixp.zerorank2() # K_{ij} = 0 for these initial data
     for i in range(DIM):
@@ -62,8 +72,13 @@ def BrillLindquist():
     betaCartU = ixp.zerorank1() # We generally choose \beta^i = 0 for these initial data
     BCartU    = ixp.zerorank1() # We generally choose B^i = 0 for these initial data
 
+    if ComputeADMGlobalsOnly == True:
+        return
+    
     cf,hDD,lambdaU,aDD,trK,alpha,vetU,betU = \
-        ctob.Convert_Cartesian_ADM_to_BSSN_curvilinear(Cartxyz, gammaCartDD,KCartDD,alphaCart,betaCartU,BCartU)
+        AtoB.Convert_Spherical_or_Cartesian_ADM_to_BSSN_curvilinear("Cartesian",Cartxyz, 
+                                                                    gammaCartDD,KCartDD,alphaCart,betaCartU,BCartU)
 
+    import BSSN.BSSN_ID_function_string as bIDf
     global returnfunction
-    returnfunction = bIDf.BSSN_ID_function_string(cf,hDD,lambdaU,aDD,trK,alpha,vetU,betU)
+    returnfunction = bIDf.BSSN_ID_function_string(cf, hDD, lambdaU, aDD, trK, alpha, vetU, betU)

@@ -1,12 +1,17 @@
 # finite_difference.py:
-#  Sets up finite difference stencils as desired.
+#  As documented in the NRPy+ tutorial notebook:
+#    Tutorial-Finite_Difference_Derivatives.ipynb ,
+#  This module generates C kernels for numerically
+#   solving PDEs with finite differences.
 #
-# Depends on: grid.py.
-#             Everything depends on outputC.py.
+# Depends on: outputC.py and grid.py.
 
-import grid as gri
-import re
-from outputC import *
+# Author: Zachariah B. Etienne
+#         zachetie **at** gmail **dot* com
+
+from outputC import *            # NRPy+: Core C code output module
+import grid as gri               # NRPy+: Functions having to do with numerical grids
+import sys                       # Standard Python module for multiplatform OS-level functions
 
 from operator import itemgetter
 
@@ -14,7 +19,8 @@ from operator import itemgetter
 import NRPy_param_funcs as par
 modulename = __name__
 # Centered finite difference accuracy order
-par.initialize_param(par.glb_param("INT", modulename, "FD_CENTDERIVS_ORDER",  4))
+par.initialize_param(par.glb_param("int", modulename, "FD_CENTDERIVS_ORDER",  4))
+par.initialize_param(par.glb_param("int", modulename, "FD_KO_ORDER__CENTDERIVS_PLUS", 2))
 
 def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
     outCparams = parse_outCparams_string(params)
@@ -65,12 +71,12 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
                    ("_ddnD" in str(var)):
                     pass
                 else:
-                    print("Error: Unregistered variable \""+str(var)+"\" in SymPy expression")
+                    print("Error: Unregistered variable \""+str(var)+"\" in SymPy expression for "+expr.lhs)
                     print("All variables in SymPy expressions passed to FD_outputC() must be registered")
                     print("in NRPy+ as either a gridfunction or Cparameter, by calling")
                     print(str(var)+" = register_gridfunctions...() (in ixp/grid) if \""+str(var)+"\" is a gridfunction, or")
                     print(str(var)+" = Cparameters() (in par) otherwise (e.g., if it is a free parameter set at C runtime).")
-                    exit(1)
+                    sys.exit(1)
                 list_of_deriv_vars_with_duplicates.append(var)
 #            elif vartype == "gridfunction":
 #                list_of_deriv_vars_with_duplicates.append(var)
@@ -128,7 +134,7 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
             print("Error: "+varstr+" has "+str(num_UDs)+" U's and D's, but ")
             print(str(num_digits)+" integers at the end. These must be equal.")
             print("Please rename your gridfunction.")
-            exit(1)
+            sys.exit(1)
         # Step 2a.2: Based on the variable name, find the rank of
         #            the underlying gridfunction of which we're
         #            trying to take the derivative.
@@ -168,7 +174,7 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
         if not is_gf:
             print("Error: Attempting to take the derivative of "+basegf+", which is not a registered gridfunction.")
             print("       Make sure your gridfunction name does not have any underscores in it!")
-            exit(1)
+            sys.exit(1)
 
     # Step 2c:
     # Check each derivative operator to make sure it is
@@ -180,7 +186,7 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
                 found_derivID = True
         if not found_derivID:
             print("Error: Valid derivative operator in "+deriv__operator[i]+" not found.")
-            exit(1)
+            sys.exit(1)
 
     # Step 2d (Upwinded derivatives algorithm, part 1):
     # If an upwinding control vector is specified, determine
@@ -199,7 +205,7 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
                     upwind_directions_unsorted_withdups.append(dirn)
                 else:
                     print("Error: Derivative operator "+deriv_op+" does not contain a direction")
-                    exit(1)
+                    sys.exit(1)
         upwind_directions = []
         if len(upwind_directions_unsorted_withdups)>0:
             upwind_directions = superfast_uniq(upwind_directions_unsorted_withdups)
@@ -297,7 +303,7 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
             return str(int(idx4[3])+os + sz*( (int(idx4[2])+os) + sz*( (int(idx4[1])+os) + sz*( int(idx4[0])+os ) ) ))
         else:
             print("Error: MemAllocStyle = "+par.parval_from_str("MemAllocStyle")+" unsupported.")
-            exit(1)
+            sys.exit(1)
 
     # Step 4d.ii: For each gridfunction and
     #      point read from memory, call unique_idx,
@@ -387,8 +393,8 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
     def read_from_memory_Ccode_onept(gfname,idx):
         idxsplit = idx.split(',')
         idx4 = [int(idxsplit[0]),int(idxsplit[1]),int(idxsplit[2]),int(idxsplit[3])]
-        #gfaccess_str = gri.gfaccess("in_gfs",gfname.upper()+"GF",ijkl_string(idx4))
-        gfaccess_str = gri.gfaccess("in_gfs",gfname,ijkl_string(idx4))
+        gf_array_name = "in_gfs" # Default array name.
+        gfaccess_str = gri.gfaccess(gf_array_name,gfname,ijkl_string(idx4))
         if outCparams.SIMD_enable == "True":
             retstring = out__type_var(gfname) + varsuffix(idx4) +" = ReadSIMD(&" + gfaccess_str + ");"
         else:
@@ -462,7 +468,7 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
             exprs[i] *= invdx[dirn1]*invdx[dirn2]
         else:
             print("Error: was unable to parse derivative operator: ",deriv__operator[i])
-            exit(1)
+            sys.exit(1)
     # Step 5b.ii: If upwind control vector is specified,
     #             add upwind control vectors to the
     #             derivative expression list, so its
@@ -493,7 +499,7 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
         NRPy_FD_StepNumber = NRPy_FD_StepNumber + 1
         default_CSE_varprefix = outCparams.CSE_varprefix
         # Prefix chosen CSE variables with "FD", for the finite difference coefficients:
-        Coutput += indent_Ccode(outputC(exprs,lhsvarnames,"returnstring",params=params + ",CSE_varprefix="+default_CSE_varprefix+"FD,includebraces=False",
+        Coutput += indent_Ccode(outputC(exprs,lhsvarnames,"returnstring",params=params + ",CSE_varprefix="+default_CSE_varprefix+"FD,includebraces=False,SIMD_const_suffix=_FDcoeff",
                                         prestring=read_from_memory_Ccode))
 
     # Step 5b.iv: Implement control-vector upwinding algorithm.
@@ -503,6 +509,13 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
                                     + str(NRPy_FD_StepNumber) + " of " + str(NRPy_FD__Number_of_Steps) +
                                     ": Implement upwinding algorithm:\n */\n")
             NRPy_FD_StepNumber = NRPy_FD_StepNumber + 1
+            if outCparams.SIMD_enable == "True":
+                Coutput += """
+const double tmp_upwind_Integer_1 = 1.000000000000000000000000000000000;
+const REAL_SIMD_ARRAY upwind_Integer_1 = ConstSIMD(tmp_upwind_Integer_1);
+const double tmp_upwind_Integer_0 = 0.000000000000000000000000000000000;
+const REAL_SIMD_ARRAY upwind_Integer_0 = ConstSIMD(tmp_upwind_Integer_0);
+"""
             for dirn in upwind_directions:
                 Coutput += indent_Ccode(out__type_var("UpWind" + str(dirn)) + " = UPWIND_ALG(UpwindControlVectorU" + str(dirn) + ");\n")
         upwindU = [sp.sympify(0) for i in range(par.parval_from_str("DIM"))]
@@ -555,9 +568,14 @@ def FD_outputC(filename,sympyexpr_list, params="", upwindcontrolvec=""):
         return Coutput+'\n'
     else:
         # Output to the file specified by outCfilename
-        with open(filename, "w") as file:
+        with open(filename, outCparams.outCfileaccess) as file:
             file.write(Coutput)
-        print("Wrote to file \"" + filename + "\"")
+        successstr = ""
+        if outCparams.outCfileaccess == "a":
+            successstr = "Appended "
+        elif outCparams.outCfileaccess == "w":
+            successstr = "Wrote "
+        print(successstr + "to file \"" + filename + "\"")
 #    print(gri.glb_gridfcs_list[1].name,list_of_points_read_from_memory[1])
 
 
@@ -631,6 +649,9 @@ def compute_fdcoeffs_fdstencl(derivstring,FDORDER=-1):
     # Step 0: Set finite differencing order, stencil size, and up/downwinding
     if FDORDER == -1:
         FDORDER = par.parval_from_str("FD_CENTDERIVS_ORDER")
+        if "dKOD" in derivstring:
+            FDORDER += par.parval_from_str("FD_KO_ORDER__CENTDERIVS_PLUS")
+
     STENCILSIZE = FDORDER+1
     UPDOWNWIND = 0
     if "dupD" in derivstring:
@@ -665,7 +686,7 @@ def compute_fdcoeffs_fdstencl(derivstring,FDORDER=-1):
     if "DDD" in derivstring:
         print("Error: Only derivatives up to second order currently supported.")
         print("       Feel free to contribute to NRPy+ to extend its functionality!")
-        exit(1)
+        sys.exit(1)
     elif "DD" in derivstring:
 
         if derivstring[len(derivstring)-1] == derivstring[len(derivstring)-2]:

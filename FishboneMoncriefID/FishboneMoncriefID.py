@@ -12,8 +12,8 @@ import reference_metric as rfm
 
 thismodule = __name__
 
-def FishboneMoncriefID():
-    par.set_parval_from_str("reference_metric::CoordSystem","Cartesian")
+def FishboneMoncriefID(CoordSystem="Cartesian"):
+    par.set_parval_from_str("reference_metric::CoordSystem",CoordSystem)
     rfm.reference_metric()
     #Set the spatial dimension parameter to 3.
     par.set_parval_from_str("grid::DIM", 3)
@@ -25,9 +25,11 @@ def FishboneMoncriefID():
     # Variables needed for initial data given in spherical basis
     r, th, ph = gri.register_gridfunctions("AUX",["r","th","ph"])
 
-    r_in,r_at_max_density,a,M = par.Cparameters("REAL",thismodule,["r_in","r_at_max_density","a","M"])
+    r_in,r_at_max_density,a,M = par.Cparameters("REAL",thismodule,
+                                                ["r_in","r_at_max_density",    "a","M"],
+                                                [   6.0,              12.0, 0.9375,1.0])
 
-    kappa,gamma = par.Cparameters("REAL",thismodule,["kappa","gamma"])
+    kappa,gamma = par.Cparameters("REAL",thismodule,["kappa","gamma"], [1.0e-3, 4.0/3.0])
 
     LorentzFactor = gri.register_gridfunctions("AUX","LorentzFactor")
 
@@ -74,16 +76,16 @@ def FishboneMoncriefID():
     global hm1
     hm1 = sp.exp(ln_h + mln_h_in) - 1
 
-    global rho0
-    rho0,Pressure0 = gri.register_gridfunctions("AUX",["rho0","Pressure0"])
+    global rho_initial
+    rho_initial,Pressure_initial = gri.register_gridfunctions("AUX",["rho_initial","Pressure_initial"])
 
     # Python 3.4 + sympy 1.0.0 has a serious problem taking the power here, hangs forever.
     # so instead we use the identity x^{1/y} = exp( [1/y] * log(x) )
     # Original expression (works with Python 2.7 + sympy 0.7.4.1):
-    # rho0 = ( hm1*(gamma-1)/(kappa*gamma) )**(1/(gamma - 1))
+    # rho_initial = ( hm1*(gamma-1)/(kappa*gamma) )**(1/(gamma - 1))
     # New expression (workaround):
-    rho0 = sp.exp( (1/(gamma-1)) * sp.log( hm1*(gamma-1)/(kappa*gamma) ))
-    Pressure0 = kappa * rho0**gamma
+    rho_initial = sp.exp( (1/(gamma-1)) * sp.log( hm1*(gamma-1)/(kappa*gamma) ))
+    Pressure_initial = kappa * rho_initial**gamma
     # Eq 3.3: First compute exp(-2 chi), assuming Boyer-Lindquist coordinates
     #    Eq 2.16: chi = psi - nu, so
     #    Eq 3.5 -> exp(-2 chi) = exp(-2 (psi - nu)) = exp(2 nu)/exp(2 psi)
@@ -97,6 +99,7 @@ def FishboneMoncriefID():
     u_ptp   = -sp.sqrt(1 + u_pphip**2)
 
     # Next compute spatial components of 4-velocity in Boyer-Lindquist coordinates:
+    global uBL4D
     uBL4D = ixp.zerorank1(DIM=4) # Components 1 and 2: u_r = u_theta = 0
     # Eq 2.12 (typo): u_(phi) = e^(-psi) u_phi -> u_phi = e^(psi) u_(phi)
     uBL4D[3] = sp.sqrt(exp2psi)*u_pphip
@@ -120,6 +123,7 @@ def FishboneMoncriefID():
     gPhys4BLUU[0][3] = gPhys4BLUU[3][0] = -2*a*M*r/(Delta*Sigma)
     gPhys4BLUU[3][3] = -4*a**2*M**2*r**2/(Delta*A*Sigma) + Sigma**2/(A*Sigma*sp.sin(th)**2)
 
+    global uBL4U
     uBL4U = ixp.zerorank1(DIM=4)
     for i in range(4):
         for j in range(4):
@@ -132,6 +136,7 @@ def FishboneMoncriefID():
         transformBLtoKS[i][i] = 1
     transformBLtoKS[0][1] = 2*r/(r**2 - 2*r + a*a)
     transformBLtoKS[3][1] =   a/(r**2 - 2*r + a*a)
+    global uKS4U
     uKS4U = ixp.zerorank1(DIM=4)
     for i in range(4):
         for j in range(4):
@@ -179,11 +184,11 @@ def FishboneMoncriefID():
             #    and gammaKSUU[][] is a spatial tensor, with indices again ranging from 0 to 2.
             gPhys4UU[i][j] = gPhys4UU[j][i] = gammaKSUU[i-1][j-1] - betaKSU[i-1]*betaKSU[j-1]/alphaKS**2
 
-    A_b = par.Cparameters("REAL",thismodule,"A_b")
+    A_b = par.Cparameters("REAL",thismodule,"A_b",1.0)
 
     A_3vecpotentialD = ixp.zerorank1()
-    # Set A_phi = A_b*rho0 FIXME: why is there a sign error?
-    A_3vecpotentialD[2] = -A_b * rho0
+    # Set A_phi = A_b*rho_initial FIXME: why is there a sign error?
+    A_3vecpotentialD[2] = -A_b * rho_initial
 
     BtildeU = ixp.register_gridfunctions_for_single_rank1("EVOL","BtildeU")
     # Eq 15 of https://arxiv.org/pdf/1501.07276.pdf:
@@ -269,7 +274,7 @@ def FishboneMoncriefID():
     #  v^i_(n) = u^i/(u^0*alpha) + beta^i/alpha. See eq 11 of https://arxiv.org/pdf/1501.07276.pdf
     Valencia3velocityU = ixp.zerorank1()
     for i in range(3):
-        Valencia3velocityU[i] = uKS4U[i + 1] / (alpha * uKS4U[0]) + betaU[i]
+        Valencia3velocityU[i] = uKS4U[i + 1] / (alpha * uKS4U[0]) + betaU[i] / alpha
 
     sqrtgamma4DET = sp.symbols("sqrtgamma4DET")
     sqrtgamma4DET = sp.sqrt(gammaDET)*alpha
@@ -284,14 +289,15 @@ def FishboneMoncriefID():
     # GRMHD variables:
     # Density and pressure:
     hm1           = hm1.subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
-    rho0          = rho0.subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
-    Pressure0     = Pressure0.subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
+    rho_initial          = rho_initial.subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
+    Pressure_initial     = Pressure_initial.subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
     LorentzFactor = LorentzFactor.subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
 
     # "Valencia" three-velocity
     for i in range(DIM):
         BtildeU[i] = BtildeU[i].subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
         uKS4U[i+1] = uKS4U[i+1].subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
+        uBL4U[i+1] = uBL4U[i+1].subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
         Valencia3velocityU[i] = Valencia3velocityU[i].subs(r,rfm.xxSph[0]).subs(th,rfm.xxSph[1]).subs(ph,rfm.xxSph[2])
 
     # Transform initial data to our coordinate system:
